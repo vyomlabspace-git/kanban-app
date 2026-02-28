@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kanban Task Tracker</title>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         * {
             margin: 0;
@@ -411,51 +410,39 @@
     </div>
 
     <script>
-        // Supabase configuration - Replace with your own credentials
-        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
-
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
+        // localStorage-based Kanban - No Supabase needed!
+        const STORAGE_KEY = 'kanban-tasks';
+        
         let tasks = [];
         let draggedTask = null;
 
         // Initialize the app
-        async function init() {
-            await loadTasks();
+        function init() {
+            loadTasks();
             setupEventListeners();
         }
 
-        // Load tasks from Supabase
-        async function loadTasks() {
-            try {
-                const { data, error } = await supabase
-                    .from('tasks')
-                    .select('*')
-                    .order('created_at', { ascending: true });
-
-                if (error) throw error;
-                tasks = data || [];
-                renderTasks();
-            } catch (error) {
-                console.error('Error loading tasks:', error);
-                // Fallback to localStorage if Supabase is not configured
-                loadFromLocalStorage();
-            }
+        // Generate unique ID
+        function generateId() {
+            return Date.now().toString(36) + Math.random().toString(36).substr(2);
         }
 
-        // Load from localStorage as fallback
-        function loadFromLocalStorage() {
-            const stored = localStorage.getItem('kanban-tasks');
+        // Load tasks from localStorage
+        function loadTasks() {
+            const stored = localStorage.getItem(STORAGE_KEY);
             if (stored) {
-                tasks = JSON.parse(stored);
-                renderTasks();
+                try {
+                    tasks = JSON.parse(stored);
+                } catch (e) {
+                    tasks = [];
+                }
             }
+            renderTasks();
         }
 
-        // Save to localStorage as backup
-        function saveToLocalStorage() {
-            localStorage.setItem('kanban-tasks', JSON.stringify(tasks));
+        // Save to localStorage
+        function saveTasks() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
         }
 
         // Render tasks on the board
@@ -502,8 +489,8 @@
                     <span class="task-due ${isOverdue ? 'overdue' : ''}">📅 ${dueDateStr}</span>
                 </div>
                 <div class="task-actions">
-                    <button class="task-action-btn" onclick="editTask(${task.id})">Edit</button>
-                    <button class="task-action-btn delete" onclick="deleteTask(${task.id})">Delete</button>
+                    <button class="task-action-btn" onclick="editTask('${task.id}')">Edit</button>
+                    <button class="task-action-btn delete" onclick="deleteTask('${task.id}')">Delete</button>
                 </div>
             `;
 
@@ -561,7 +548,7 @@
             e.currentTarget.classList.remove('drag-over');
         }
 
-        async function handleDrop(e) {
+        function handleDrop(e) {
             e.preventDefault();
             e.currentTarget.classList.remove('drag-over');
 
@@ -571,21 +558,12 @@
             if (newStatus === draggedTask.status) return;
 
             // Update task status locally
-            const oldStatus = draggedTask.status;
-            draggedTask.status = newStatus;
-
-            // Update in Supabase
-            try {
-                await supabase
-                    .from('tasks')
-                    .update({ status: newStatus })
-                    .eq('id', draggedTask.id);
-            } catch (error) {
-                console.error('Error updating task:', error);
+            const index = tasks.findIndex(t => t.id === draggedTask.id);
+            if (index !== -1) {
+                tasks[index].status = newStatus;
+                saveTasks();
+                renderTasks();
             }
-
-            saveToLocalStorage();
-            renderTasks();
         }
 
         // Modal functions
@@ -618,7 +596,7 @@
         }
 
         // Form submission handler
-        async function handleFormSubmit(e) {
+        function handleFormSubmit(e) {
             e.preventDefault();
 
             const taskId = document.getElementById('task-id').value;
@@ -627,47 +605,37 @@
             const priority = document.getElementById('priority').value;
             const due_date = document.getElementById('due_date').value;
 
-            try {
-                if (taskId) {
-                    // Update existing task
-                    const { error } = await supabase
-                        .from('tasks')
-                        .update({ title, description, priority, due_date })
-                        .eq('id', taskId);
-
-                    if (error) throw error;
-
-                    const index = tasks.findIndex(t => t.id == taskId);
-                    if (index !== -1) {
-                        tasks[index] = { ...tasks[index], title, description, priority, due_date };
-                    }
-                } else {
-                    // Create new task
-                    const { data, error } = await supabase
-                        .from('tasks')
-                        .insert([{
-                            title,
-                            description,
-                            priority,
-                            due_date,
-                            status: 'todo'
-                        }])
-                        .select();
-
-                    if (error) throw error;
-
-                    if (data && data[0]) {
-                        tasks.push(data[0]);
-                    }
+            if (taskId) {
+                // Update existing task
+                const index = tasks.findIndex(t => t.id === taskId);
+                if (index !== -1) {
+                    tasks[index] = { 
+                        ...tasks[index], 
+                        title, 
+                        description, 
+                        priority, 
+                        due_date,
+                        updated_at: new Date().toISOString()
+                    };
                 }
-
-                saveToLocalStorage();
-                renderTasks();
-                closeModal();
-            } catch (error) {
-                console.error('Error saving task:', error);
-                alert('Error saving task. Please check Supabase configuration.');
+            } else {
+                // Create new task
+                const newTask = {
+                    id: generateId(),
+                    title,
+                    description,
+                    priority,
+                    due_date,
+                    status: 'todo',
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+                tasks.push(newTask);
             }
+
+            saveTasks();
+            renderTasks();
+            closeModal();
         }
 
         // Edit task
@@ -676,21 +644,12 @@
         }
 
         // Delete task
-        async function deleteTask(taskId) {
+        function deleteTask(taskId) {
             if (!confirm('Are you sure you want to delete this task?')) return;
-
-            try {
-                await supabase
-                    .from('tasks')
-                    .delete()
-                    .eq('id', taskId);
-
-                tasks = tasks.filter(t => t.id !== taskId);
-                saveToLocalStorage();
-                renderTasks();
-            } catch (error) {
-                console.error('Error deleting task:', error);
-            }
+            
+            tasks = tasks.filter(t => t.id !== taskId);
+            saveTasks();
+            renderTasks();
         }
 
         // Initialize the app
